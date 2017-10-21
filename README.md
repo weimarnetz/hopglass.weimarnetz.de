@@ -20,7 +20,7 @@ Hopglass is a static JavaScript app that displays the map and data.
 
 ## Setup Hopglass
 
-This is only for the client - not the server. 
+We only use the hopglass webclient - not the hopglass-server. 
 
 You need a recent nodejs + npm (tested on 8.x)
 
