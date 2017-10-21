@@ -1,0 +1,28 @@
+{
+  "dataPath": "/data/",
+  "siteName": "Freifunk Weimar",
+  "mapSigmaScale": 0.5,
+  "showContact": true,  
+  "maxAge": 30,
+  "mapLayers": [
+    { "name": "CartoDB",
+      "url": "https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png",
+      "config": {
+        "maxZoom": 18,
+        "attribution": "&copy; <a href=\"http://www.openstreetmap.org/copyright\">OpenStreetMap</a>, &copy; | <a href=\"https://carto.com/attribution\">CARTO</a>"
+      }
+    },
+    {
+      "name": "OpenStreetMap.HOT"
+    }
+  ],
+  "siteNames": [
+    { "site": "weimar", "name": "Weimar" }
+  ],
+  "hwImg": [
+    { "thumbnail": "https://cdn.rawgit.com/Moorviper/meshviewer_hwpics/master/nodes/{MODELHASH}.svg",
+      "caption": "Knoten {MODELHASH}"
+    }
+  ]
+}
+
