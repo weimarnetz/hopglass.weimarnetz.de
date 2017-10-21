@@ -22,7 +22,7 @@ Hopglass is a static JavaScript app that displays the map and data.
 
 You need a recent nodejs + npm (tested on 8.x)
 
-Add a user and build hopglass: 
+Add a user (only for deployment if you want to) and build hopglass: 
 
     # adduser --disabled-password --shell /bin/nologin hopglass
     # sudo -u hopglass /bin/bash 
