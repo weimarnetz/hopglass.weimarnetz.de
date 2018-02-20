@@ -22,7 +22,7 @@ def handle_request(response):
     global i
     print "URL: %s, code: %d, bytes: %d, URLs to go: %d" % (response.effective_url, response.code, len(response.body) if response.code == 200 else 0, i)
     if response.code == 200:
-        cache.set(response.effective_url, response.body, expire=60*30)
+        cache.set(response.effective_url, response.body, expire=60*5)
         process_node_json(response.effective_url, response.body)
     elif response.code == 599:
         print "Timeout for %s, re-queuing" % response.effective_url
@@ -34,14 +34,15 @@ def handle_request(response):
 
 def get_nodes():
     global cache
-    url = "http://mapapi.weimarnetz.de/view_nodes_spatial?bbox=11.2494850159,50.9517764509,11.4079284668,51.007868394"  # Weimar
+    #url = "http://mapapi.weimarnetz.de/view_nodes_spatial?bbox=11.2494850159,50.9517764509,11.4079284668,51.007868394"  # Weimar
+    url = "https://mapapi.weimarnetz.de/db/_all_docs?include_docs=true"
     if url in cache:
         return cache[url]
     http_client = httpclient.HTTPClient()
     response = http_client.fetch(url)
     http_client.close()
     body = response.body
-    cache.set(url, body, expire=60*10)
+    cache.set(url, body, expire=60*5)
     return body
 
 nodes = []
@@ -59,19 +60,53 @@ def process_node_json(url, body):
         lastseen = owmnode["mtime"][:-1]
         lastseensecs = (datetime.datetime.utcnow() - dateutil.parser.parse(lastseen)).total_seconds()
         isonline = lastseensecs < 60*60*24  # assume offline if not seen for more than a day
-        if lastseensecs > 60*60*24*7:
-            print "...offline more than a week, skipping"
+        if lastseensecs > 60*60*24*30:
+            print "...offline more than a month, skipping"
             return
-        isuplink = len([a for a in owmnode.get("interfaces", []) if a.get("ifname", "none") == "ffvpn"]) > 0
+        isuplink = len([a for a in owmnode.get("interfaces", []) if a.get("ifname", "none") == "tap0"]) > 0
         hasclientdhcp = len([a for a in owmnode.get("interfaces", [])
                              if(a.get("encryption", "unknown") == "none" and a.get("mode", "unknown") == "ap")
-                               or a.get("ifname", "none") == "br-dhcp"
+                               or a.get("name", "none") == "vap" or a.get("name", "none") == "wlan"
                             ]) > 0
         site_code = "hotspot" if hasclientdhcp else "routeronly"  # hack: allow selecting nodes with hotspot functionality via statistics
         try:
+            gateway = owmnode["ipv4defaultGateway"]["gateway"]
+        except:
+            gateway = None
+        try:
             uptimesecs = owmnode["system"]["uptime"][0]
         except:
-            uptimesecs = 0
+            uptimesecs = None
+        try:
+            loadavg = owmnode["system"]["loadavg"][2]
+        except:
+            loadavg = None
+        try:
+            free = owmnode["system"]["sysinfo"][2]["freeram"]
+            total = owmnode["system"]["sysinfo"][2]["totalram"]
+            memory_usage = (total-free)/float(total)
+        except:
+            memory_usage = None
+        try:
+            iplist=[]
+            for iface in owmnode['interfaces']:
+                iplist.append(iface.get("ipaddr"))
+        except:
+            iplist= None
+        try:
+            macaddr= None
+            for iface in owmnode['interfaces']:
+                if iface.get("name")=='lan':
+                    macaddr = iface.get("macaddr")
+        except:
+            macaddr= None
+        try:
+            clients= None
+            for iface in owmnode['interfaces']:
+                if iface.get("name")=='vap' or iface.get("name")=='wlan':
+                   clients=len(iface["wifi"][0]["assoclist"])
+        except:
+            clients= None
         hostid = owmnode["_id"]  # with ".olsr"
         hostname = owmnode["hostname"]  # without ".olsr"
         is24ghz = True
@@ -100,16 +135,16 @@ def process_node_json(url, body):
         longitude = owmnode["longitude"]
         latitude = owmnode["latitude"]
         try:
-            if "name" in owmnode["firmware"] and len(owmnode["firmware"]["name"])>0:
-                firmware_base = owmnode["firmware"]["name"]  # Kathleen >= 0.2.0 uses "name" field
-            else:
-                firmware_base = owmnode["firmware"]["revision"]  # "Freifunk Berlin kathleen 0.2.0-beta+718cff0"
-            firmware_base = re.sub(r'^Freifunk-Berlin', 'Freifunk Berlin', firmware_base)
-            firmware_base = re.sub(r'^Freifunk Berlin kathleen', 'Kathleen', firmware_base) # "Kathleen 0.2.0-beta+718cff0"
-            firmware_base = re.sub(r'^OpenWrt Attitude Adjustment', 'OpenWrt AA', firmware_base)
-            firmware_base = re.sub(r'^OpenWrt Barrier Breaker', 'OpenWrt BB', firmware_base)
-            firmware_base = re.sub(r'^OpenWrt Chaos Calmer', 'OpenWrt CC', firmware_base)
-            firmware_release = re.sub(r'\+[a-f0-9]{7}$', '', firmware_base)  # "Kathleen 0.2.0-beta"
+            if "revision" in owmnode["firmware"]:
+                firmware_base = owmnode["firmware"]["revision"]
+                firmware_release = ""
+                try:
+                    if "fffversion" in owmnode["firmware"]:
+                        firmware_release = owmnode["firmware"]["fffversion"]
+                except:
+                    firmware_release = "unknown"
+            if "version" and "branch" in owmnode["firmware"]:
+                firmware_release = owmnode["firmware"]["branch"]+'/'+owmnode["firmware"]["version"]
         except:
             firmware_base = "unknown"
             firmware_release = "unknown"
@@ -121,36 +156,50 @@ def process_node_json(url, body):
                                  'nproc': 1},  # TODO
                     'hostname': hostname,
                     'location': {'latitude': latitude, 'longitude': longitude},
-                    #'network': {'addresses': False, #TODO
-                    #            'mac': False, #TODO
-                    #            'mesh': False}, #TODO
+                    'network': {'addresses': iplist,
+                                'mac': macaddr},
                     'node_id': hostid,
                     'owner': {'contact': email},
                     'software': {'firmware': {'base': firmware_base, 'release': firmware_release}},
                     'system': {'role': 'node', 'site_code': site_code}
                 },
                 'statistics': {
-                    'clients': 0,  # we don't want client statistics
-                    'uptime': uptimesecs
+                    'clients': clients, 
+                    'uptime': uptimesecs,
+                    'loadavg': loadavg,
+                    'gateway': gateway,
+                    'memory_usage' : memory_usage
                 }
                }
         nodes.append(node)
-        print node
 
         for link in owmnode.get("links", []):
           targetid = link["id"]
           quality = link["quality"]
           quality = 1.0/float(quality) if quality > 0 else 999
+          linktype=None
+          try:
+              wifi_match = re.search(r'mesh|wlan', link["interface"])
+              lan_match = re.search(r'lan', link["interface"])
+              vpn_match = re.search(r'vpn', link["interface"]) 
+              if wifi_match:
+                  linktype='wireless'
+              elif lan_match:
+                  linktype='other'
+              elif vpn_match:
+                  linktype='tunnel'
+          except:
+              linktype=None
           graphlink = {'bidirect': True,
                        'source': hostid,
                        'target': targetid,
                        'tq': quality,
-                       'vpn': False}
+                       'type': linktype}
           graphlinks.append(graphlink)
-          print graphlink
+          # print graphlink
         graphnodes[hostid] = {"id": hostid, "node_id": hostid, "seq": len(graphnodes)}
-        print graphnodes[hostid]
-        print "**********************************"
+        # print graphnodes[hostid]
+        # print "**********************************"
     except:
         traceback.print_exc(file=sys.stdout)
 
@@ -191,16 +240,31 @@ for link in graphlinks:
     brokenlinks.append(link)
 graphlinks = [link for link in graphlinks if link not in brokenlinks]
 
+def purify(o):
+    if hasattr(o, 'items'):
+        oo = type(o)()
+        for k in o:
+            if k != None and o[k] != None:
+                oo[k] = purify(o[k])
+    elif hasattr(o, '__iter__'):
+        oo = [ ] 
+        for it in o:
+            if it != None:
+                oo.append(purify(it))
+    else: return o
+    return type(o)(oo)
+
 graphnodes = [node for _, node in graphnodes.iteritems()]
 graphnodes = sorted(graphnodes, key=lambda x: x["seq"])
-graph = {"batadv": {"directed": False, "graph": [], "links": graphlinks, "multigraph": False, "nodes": graphnodes}, "version": 1}
-print graph
+graph = {"batadv": {"directed": False, "graph": [], "links": purify(graphlinks), "multigraph": False, "nodes": graphnodes}, "version": 1}
+# print graph
 with open("graph.json", "w") as outfile:
     json.dump(graph, outfile)
 
 # finalize nodes.json
-nodes = {"nodes": nodes, "timestamp": timestamp, "version": 2}
-print nodes
+nodes = {"nodes": purify(nodes), "timestamp": timestamp, "version": 2}
+# print nodes
+
 with open("nodes.json", "w") as outfile:
     json.dump(nodes, outfile)
 
