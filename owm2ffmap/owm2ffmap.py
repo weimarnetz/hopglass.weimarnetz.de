@@ -60,8 +60,8 @@ def process_node_json(url, body):
         lastseen = owmnode["mtime"][:-1]
         lastseensecs = (datetime.datetime.utcnow() - dateutil.parser.parse(lastseen)).total_seconds()
         isonline = lastseensecs < 60*60*24  # assume offline if not seen for more than a day
-        if lastseensecs > 60*60*24*30:
-            print "...offline more than a month, skipping"
+        if lastseensecs > 60*60*24*7:
+            print "...offline more than a week, skipping"
             return
         isuplink = len([a for a in owmnode.get("interfaces", []) if a.get("ifname", "none") == "tap0"]) > 0
         hasclientdhcp = len([a for a in owmnode.get("interfaces", [])
@@ -84,7 +84,8 @@ def process_node_json(url, body):
         try:
             free = owmnode["system"]["sysinfo"][2]["freeram"]
             total = owmnode["system"]["sysinfo"][2]["totalram"]
-            memory_usage = (total-free)/float(total)
+            buffers = owmnode["system"]["sysinfo"][2]["bufferram"]
+            memory_usage = (total-free-buffers)/float(total)
         except:
             memory_usage = None
         try:
@@ -101,12 +102,15 @@ def process_node_json(url, body):
         except:
             macaddr= None
         try:
-            clients= None
+            clients=0
             for iface in owmnode['interfaces']:
-                if iface.get("name")=='vap' or iface.get("name")=='wlan':
-                   clients=len(iface["wifi"][0]["assoclist"])
+                if iface.get("name")=='vap' or iface.get("name")=='wlan' or iface.get("name")=='roam':
+                    for radio in iface["wifi"]:
+                        print radio["assoclist"]
+                        clients+=len(radio["assoclist"])
+                        print clients
         except:
-            clients= None
+            clients=None
         hostid = owmnode["_id"]  # with ".olsr"
         hostname = owmnode["hostname"]  # without ".olsr"
         is24ghz = True
@@ -129,9 +133,20 @@ def process_node_json(url, body):
         except:
             hardware_model = "unknown"
         try:
-            email = owmnode["freifunk"]["contact"].get("mail", "")
+            contact = None
+            cdata = owmnode["freifunk"]["contact"]
+            cstring = ''
+            for k,v in cdata.items():
+                if k=='mail' and v=='Email hidden':
+                    continue
+                if v not in cstring:
+                    cstring += v+' '
+            if cstring.strip():
+                contact = cstring.strip()
+            else:
+                contact = None
         except:
-            email = ""
+            contact = None 
         longitude = owmnode["longitude"]
         latitude = owmnode["latitude"]
         try:
@@ -159,7 +174,7 @@ def process_node_json(url, body):
                     'network': {'addresses': iplist,
                                 'mac': macaddr},
                     'node_id': hostid,
-                    'owner': {'contact': email},
+                    'owner': {'contact': contact},
                     'software': {'firmware': {'base': firmware_base, 'release': firmware_release}},
                     'system': {'role': 'node', 'site_code': site_code}
                 },
@@ -215,7 +230,7 @@ timestamp = datetime.datetime.utcnow().isoformat()
 
 http_client = httpclient.AsyncHTTPClient()
 for row in data["rows"]:
-    url = "http://mapapi.weimarnetz.de/db/" + row["id"].strip()
+    url = "https://mapapi.weimarnetz.de/db/" + row["id"].strip()
     nodejson = cache.get(url, None)
     if nodejson is None:
         i += 1
